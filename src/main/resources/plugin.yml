@@ -1,0 +1,8 @@
+name: HarvestContracts
+version: '2.0.0'
+main: dev.heronex.HarvestContracts
+api-version: '1.21.11'
+description: Complete daily farming contracts
+commands:
+  harvest:
+    description: Complete daily farming contracts
