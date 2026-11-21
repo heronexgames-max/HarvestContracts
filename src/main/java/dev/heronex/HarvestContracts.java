@@ -7,8 +7,7 @@ import org.bukkit.block.data.Ageable;
 import org.bukkit.command.*;
 import org.bukkit.entity.Player;
 import org.bukkit.event.*;
-import org.bukkit.event.block.*;
- import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
@@ -35,6 +34,7 @@ public final class HarvestContracts extends JavaPlugin implements Listener {
         Block block = event.getBlock();
         if (!(block.getBlockData() instanceof Ageable data) || data.getAge() != data.getMaximumAge()) return;
         recordWeekly(player, block.getType(), day);
+        recordCommunity(player, block.getType(), week(day));
         if (block.getType() != crop(day)) return;
         String key = key(player, day);
         int progress = getConfig().getInt(key + ".progress");
@@ -103,8 +103,60 @@ public final class HarvestContracts extends JavaPlugin implements Listener {
         player.sendMessage("Weekly reward: " + (amount - overflow) + " collected, " + overflow + " still available.");
     }
 
+    private static final int COMMUNITY_PER_CROP = 256;
+    private static final int COMMUNITY_MINIMUM = 32;
+    private static final int COMMUNITY_REWARD = 24;
+
+    private String campaign(long week) { return "campaigns." + week; }
+
+    private void recordCommunity(Player player, Material material, long week) {
+        List<Material> crops = weeklyCrops(week);
+        if (!crops.contains(material)) return;
+        String campaign = campaign(week);
+        if (getConfig().getBoolean(campaign + ".complete")) return;
+        String cropPath = campaign + ".crops." + material.name();
+        int count = getConfig().getInt(cropPath);
+        if (count >= COMMUNITY_PER_CROP) return;
+        getConfig().set(cropPath, count + 1);
+
+        String member = "campaign-players." + player.getUniqueId() + "." + week;
+        int contributed = getConfig().getInt(member + ".contributed");
+        if (contributed < COMMUNITY_MINIMUM) {
+            getConfig().set(member + ".contributed", contributed + 1);
+            if (contributed + 1 == COMMUNITY_MINIMUM) {
+                getConfig().set(member + ".unclaimed", COMMUNITY_REWARD);
+                player.sendMessage("You qualified for the community reward if the server completes all three goals.");
+            }
+        }
+        if (count + 1 == COMMUNITY_PER_CROP && crops.stream().allMatch(crop ->
+                getConfig().getInt(campaign + ".crops." + crop.name()) >= COMMUNITY_PER_CROP)) {
+            getConfig().set(campaign + ".complete", true);
+            saveConfig();
+            getServer().broadcast(Component.text("Community harvest complete! Qualified players can use /harvest community."));
+        }
+    }
+
+    private void claimCommunity(Player player) {
+        var periods = getConfig().getConfigurationSection("campaign-players." + player.getUniqueId());
+        String reward = periods == null ? null : periods.getKeys(false).stream()
+            .map(Long::parseLong).sorted()
+            .filter(period -> getConfig().getBoolean(campaign(period) + ".complete"))
+            .map(period -> period + ".unclaimed")
+            .filter(path -> periods.getInt(path) > 0).findFirst().orElse(null);
+        if (reward == null) {
+            player.sendMessage("No community reward ready. See /harvest board for campaign progress.");
+            return;
+        }
+        int amount = periods.getInt(reward);
+        int overflow = player.getInventory().addItem(new ItemStack(Material.EMERALD, amount))
+            .values().stream().mapToInt(ItemStack::getAmount).sum();
+        periods.set(reward, overflow);
+        saveConfig();
+        player.sendMessage("Community reward: " + (amount - overflow) + " emeralds collected, " + overflow + " still available.");
+    }
+
     private final class Board implements InventoryHolder {
-        private final Inventory inventory = getServer().createInventory(this, 27, Component.text("Harvest Contracts"));
+        private final Inventory inventory = getServer().createInventory(this, 36, Component.text("Harvest Contracts"));
 
         @Override public Inventory getInventory() { return inventory; }
 
@@ -130,14 +182,26 @@ public final class HarvestContracts extends JavaPlugin implements Listener {
             board.item(11 + i * 2, Material.PAPER, "Weekly | " + material.name(),
                 getConfig().getInt(weeklyKey(player, week) + "." + material.name()) + "/" + weeklyGoal(i));
         }
-        board.item(22, Material.EMERALD, "Claim weekly reward", "Collect the oldest completed reward.");
+        String member = "campaign-players." + player.getUniqueId() + "." + week;
+        for (int i = 0; i < crops.size(); i++) {
+            String cropName = crops.get(i).name();
+            board.item(20 + i * 2, Material.HAY_BLOCK, "Community | " + cropName,
+                getConfig().getInt(campaign(week) + ".crops." + cropName) + "/" + COMMUNITY_PER_CROP);
+        }
+        board.item(31, Material.GOLD_INGOT, "Claim community reward",
+            "Your contribution: " + getConfig().getInt(member + ".contributed") + "/" + COMMUNITY_MINIMUM);
+        board.item(29, Material.EMERALD, "Claim weekly reward", "Collect the oldest completed reward.");
         player.openInventory(board.inventory);
     }
 
     @EventHandler public void click(InventoryClickEvent event) {
         if (!(event.getView().getTopInventory().getHolder() instanceof Board)) return;
         event.setCancelled(true);
-        if (event.getRawSlot() == 22 && event.getWhoClicked() instanceof Player player) claimWeekly(player);
+        if (!(event.getWhoClicked() instanceof Player player)) return;
+        switch (event.getRawSlot()) {
+            case 29 -> claimWeekly(player);
+            case 31 -> claimCommunity(player);
+        }
     }
 
     @EventHandler public void drag(InventoryDragEvent event) {
@@ -157,6 +221,10 @@ public final class HarvestContracts extends JavaPlugin implements Listener {
             openBoard(player);
             return true;
         }
+        if (args.length == 1 && args[0].equalsIgnoreCase("community")) {
+            claimCommunity(player);
+            return true;
+        }
         if (args.length == 1 && args[0].equalsIgnoreCase("weekly")) {
             claimWeekly(player);
             return true;
@@ -171,7 +239,7 @@ public final class HarvestContracts extends JavaPlugin implements Listener {
             return true;
         }
         if (args.length != 1 || !args[0].equalsIgnoreCase("claim")) {
-            player.sendMessage("/harvest [claim|board|weekly]");
+            player.sendMessage("/harvest [claim|board|weekly|community]");
         } else if (getConfig().getBoolean(key + ".claimed")) {
             player.sendMessage("Today's reward is already claimed.");
         } else if (progress < GOAL) {
