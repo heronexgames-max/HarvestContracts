@@ -24,3 +24,9 @@ Open the board, break an immature crop, then harvest a mature crop matching an o
 The whole server shares a third weekly challenge. Deliver 256 mature harvests for each of the three featured crops by breaking them in Survival. A harvest counts toward the community pool while that crop still has room. Players who contribute at least 32 qualifying harvests can claim 24 emeralds once all three shared quotas are met. Completed rewards survive the weekly reset and partial claims can be retried. Use the bottom row of `/harvest board` or `/harvest community` to claim.
 
 To demo it, open the board as two players, contribute crops from both accounts, and compare the shared counters with each player's individual eligibility. Check that the personal reward stays locked until the server fills the final quota.
+
+## Daily streaks
+
+Complete the daily contract on consecutive UTC days to build a streak. The third day awards five bonus emeralds, and every seventh day awards twelve. A missed day resets the active streak. Your personal best and earned bonuses are retained across resets and restarts.
+
+Use `/harvest streak` to see your current streak, record and unclaimed balance. Claim one stack at a time from the clock on the contract board or with `/harvest streak claim`. Inventory overflow stays in the balance. Streak tracking begins with the first daily contract you complete after installing 2.2.

@@ -41,9 +41,53 @@ public final class HarvestContracts extends JavaPlugin implements Listener {
         if (progress >= GOAL) return;
         getConfig().set(key + ".progress", progress + 1);
         if (progress + 1 == GOAL) {
+            registerStreak(player, day);
             saveConfig();
             player.sendMessage("Daily contract complete. Use /harvest claim to collect 3 emeralds.");
         }
+    }
+
+    private String streak(Player player) {
+        return "streaks." + player.getUniqueId();
+    }
+
+    private int activeStreak(String path, long today) {
+        long lastDay = getConfig().getLong(path + ".last-day", Long.MIN_VALUE);
+        return lastDay == today || lastDay == today - 1 ? getConfig().getInt(path + ".length") : 0;
+    }
+
+    private void registerStreak(Player player, long today) {
+        String path = streak(player);
+        if (getConfig().getLong(path + ".last-day", Long.MIN_VALUE) == today) return;
+        int length = activeStreak(path, today) + 1;
+        getConfig().set(path + ".last-day", today);
+        getConfig().set(path + ".length", length);
+        getConfig().set(path + ".best", Math.max(length, getConfig().getInt(path + ".best")));
+
+        int reward = length % 7 == 0 ? 12 : length == 3 ? 5 : 0;
+        if (reward > 0) {
+            getConfig().set(path + ".pending", getConfig().getLong(path + ".pending") + reward);
+            player.sendMessage("Harvest streak milestone: " + length + " days. Claim with /harvest streak claim.");
+        }
+    }
+
+    private void streakCommand(Player player, boolean claim) {
+        String path = streak(player);
+        long pending = getConfig().getLong(path + ".pending");
+        if (!claim || pending == 0) {
+            player.sendMessage("Daily streak: " + activeStreak(path, day()) + " | Best: "
+                + getConfig().getInt(path + ".best") + " | Unclaimed emeralds: " + pending);
+            return;
+        }
+        int batch = (int) Math.min(Material.EMERALD.getMaxStackSize(), pending);
+        int overflow = player.getInventory().addItem(new ItemStack(Material.EMERALD, batch))
+            .values().stream().mapToInt(ItemStack::getAmount).sum();
+        int collected = batch - overflow;
+        if (collected > 0) {
+            getConfig().set(path + ".pending", pending - collected);
+            saveConfig();
+        }
+        player.sendMessage("Streak reward: " + collected + " collected, " + (pending - collected) + " remaining.");
     }
 
     private List<Material> weeklyCrops(long week) {
@@ -190,6 +234,9 @@ public final class HarvestContracts extends JavaPlugin implements Listener {
         }
         board.item(31, Material.GOLD_INGOT, "Claim community reward",
             "Your contribution: " + getConfig().getInt(member + ".contributed") + "/" + COMMUNITY_MINIMUM);
+        String streak = streak(player);
+        board.item(33, Material.CLOCK, "Daily streak | " + activeStreak(streak, day),
+            "Best: " + getConfig().getInt(streak + ".best") + " | Pending: " + getConfig().getLong(streak + ".pending"));
         board.item(29, Material.EMERALD, "Claim weekly reward", "Collect the oldest completed reward.");
         player.openInventory(board.inventory);
     }
@@ -201,6 +248,7 @@ public final class HarvestContracts extends JavaPlugin implements Listener {
         switch (event.getRawSlot()) {
             case 29 -> claimWeekly(player);
             case 31 -> claimCommunity(player);
+            case 33 -> streakCommand(player, true);
         }
     }
 
@@ -217,6 +265,12 @@ public final class HarvestContracts extends JavaPlugin implements Listener {
 
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!(sender instanceof Player player)) return true;
+        if (args.length > 0 && args[0].equalsIgnoreCase("streak")) {
+            if (args.length == 1) streakCommand(player, false);
+            else if (args.length == 2 && args[1].equalsIgnoreCase("claim")) streakCommand(player, true);
+            else player.sendMessage("/harvest streak [claim]");
+            return true;
+        }
         if (args.length == 1 && args[0].equalsIgnoreCase("board")) {
             openBoard(player);
             return true;
@@ -239,7 +293,7 @@ public final class HarvestContracts extends JavaPlugin implements Listener {
             return true;
         }
         if (args.length != 1 || !args[0].equalsIgnoreCase("claim")) {
-            player.sendMessage("/harvest [claim|board|weekly|community]");
+            player.sendMessage("/harvest [claim|board|weekly|community|streak]");
         } else if (getConfig().getBoolean(key + ".claimed")) {
             player.sendMessage("Today's reward is already claimed.");
         } else if (progress < GOAL) {
